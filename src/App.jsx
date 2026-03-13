@@ -45,7 +45,7 @@ const MASTER = [
 const INIT_TARGETS={pp64:65,pp128:25};
 const INIT_MIX={p64:10,p128:8};
 const INIT_WEEKPLAN={};
-const LEAD_WEEKS={
+const DEFAULT_LEAD_WEEKS={
   "Relay Modules":3,"Sub-Assemblies":2,"Motherboards":2,"Chassis":2,"PCBs":2,"Power & Compute":4,"Shipping":3,"Hardware":1,
 };
 
@@ -576,7 +576,7 @@ function Orders({parts,targets,buildLog}){
 }
 
 // ── FORECAST ──────────────────────────────────────────────────────────────────
-function Forecast({parts,targets,mix,buildLog,weekPlan}){
+function Forecast({parts,targets,mix,buildLog,weekPlan,leadWeeks,setLeadWeeks,saveAll,allState}){
   const bP64=buildLog.reduce((a,e)=>a+e.pp64,0),bP128=buildLog.reduce((a,e)=>a+e.pp128,0);
   const remP64=Math.max(0,targets.pp64-bP64),remP128=Math.max(0,targets.pp128-bP128);
   const maxActualWeek=buildLog.length>0?Math.max(...buildLog.map(e=>e.weekNum||1)):0;
@@ -609,7 +609,7 @@ function Forecast({parts,targets,mix,buildLog,weekPlan}){
       const needed=p.p64*remP64+p.p128*remP128;
       if(!needed)continue;
       const eff=p.qty+p.inBuild+p.onOrder;
-      const lead=LEAD_WEEKS[p.cat]||2;
+      const lead=leadWeeks[p.cat]||2;
       const ro=runoutWeek[p.id];
       const startBy=ro?ro-lead:null;
       const weeksLeft=ro?ro-maxActualWeek:null;
@@ -698,29 +698,40 @@ function Forecast({parts,targets,mix,buildLog,weekPlan}){
       </table></div>
     </div>
     <div style={{...S.card,background:"#080c10",border:"1px solid #1e2d3d"}}>
-      <div style={S.cT}>Lead Time Reference</div>
+      <div style={S.cT}>Lead Time Reference — click to edit</div>
       <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-        {Object.entries(LEAD_WEEKS).map(([cat,wks])=>(
-          <div key={cat} style={{background:"#0d1117",border:"1px solid #1e2d3d",borderRadius:4,padding:"5px 10px",fontSize:11}}>
-            <span style={{color:C.grey}}>{cat}: </span><b style={{color:C.amber}}>{wks}w</b>
+        {Object.entries(leadWeeks).map(([cat,wks])=>(
+          <div key={cat} style={{background:"#0d1117",border:"1px solid #1e2d3d",borderRadius:4,padding:"5px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{color:C.grey}}>{cat}:</span>
+            <input type="number" min="1" max="20" value={wks}
+              onChange={async e=>{
+                const v=Math.max(1,parseInt(e.target.value)||1);
+                const lw={...leadWeeks,[cat]:v};
+                setLeadWeeks(lw);
+                await saveAll(allState.parts,allState.targets,allState.mix,allState.buildLog,allState.weekPlan,lw);
+              }}
+              style={{background:"#141c2a",border:"1px solid #1e3a5f",borderRadius:3,color:C.amber,
+                padding:"2px 4px",fontSize:11,width:36,textAlign:"center",fontFamily:"inherit",fontWeight:700}}/>
+            <span style={{color:C.amber}}>w</span>
           </div>
         ))}
       </div>
-      <div style={{fontSize:10,color:C.grey,marginTop:8}}>Update ETA week numbers in Inventory tab to refine the forecast timing.</div>
+      <div style={{fontSize:10,color:C.grey,marginTop:8}}>Changes save instantly and sync to all teammates.</div>
     </div>
   </div>;
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function App(){
-  const [tab,setTab]          = useState("overview");
-  const [parts,setParts]      = useState(MASTER);
-  const [targets,setTargets]  = useState(INIT_TARGETS);
-  const [mix,setMix]          = useState(INIT_MIX);
-  const [weekPlan,setWeekPlan]= useState(INIT_WEEKPLAN);
-  const [buildLog,setBuildLog]= useState([]);
-  const [loading,setLoading]  = useState(true);
-  const [syncMsg,setSyncMsg]  = useState("");
+  const [tab,setTab]              = useState("overview");
+  const [parts,setParts]          = useState(MASTER);
+  const [targets,setTargets]      = useState(INIT_TARGETS);
+  const [mix,setMix]              = useState(INIT_MIX);
+  const [weekPlan,setWeekPlan]    = useState(INIT_WEEKPLAN);
+  const [buildLog,setBuildLog]    = useState([]);
+  const [leadWeeks,setLeadWeeks]  = useState(DEFAULT_LEAD_WEEKS);
+  const [loading,setLoading]      = useState(true);
+  const [syncMsg,setSyncMsg]      = useState("");
 
   // ── Load all data from Supabase on mount ──
   useEffect(()=>{
@@ -728,8 +739,8 @@ export default function App(){
       const{data,error}=await supabase.from("pp_data").select("key,value");
       if(!error&&data){
         const row=k=>data.find(r=>r.key===k)?.value;
-        const p=row("pp-parts"),t=row("pp-targets"),m=row("pp-mix"),l=row("pp-log"),wp=row("pp-weekplan");
-        if(p)setParts(p); if(t)setTargets(t); if(m)setMix(m); if(l)setBuildLog(l); if(wp)setWeekPlan(wp);
+        const p=row("pp-parts"),t=row("pp-targets"),m=row("pp-mix"),l=row("pp-log"),wp=row("pp-weekplan"),lw=row("pp-leadweeks");
+        if(p)setParts(p); if(t)setTargets(t); if(m)setMix(m); if(l)setBuildLog(l); if(wp)setWeekPlan(wp); if(lw)setLeadWeeks(lw);
       }
       setLoading(false);
     })();
@@ -741,24 +752,26 @@ export default function App(){
       .channel("pp_data_changes")
       .on("postgres_changes",{event:"*",schema:"public",table:"pp_data"},payload=>{
         const{key,value}=payload.new||{};
-        if(key==="pp-parts")   setParts(value);
-        if(key==="pp-targets") setTargets(value);
-        if(key==="pp-mix")     setMix(value);
-        if(key==="pp-log")     setBuildLog(value);
-        if(key==="pp-weekplan")setWeekPlan(value);
+        if(key==="pp-parts")     setParts(value);
+        if(key==="pp-targets")   setTargets(value);
+        if(key==="pp-mix")       setMix(value);
+        if(key==="pp-log")       setBuildLog(value);
+        if(key==="pp-weekplan")  setWeekPlan(value);
+        if(key==="pp-leadweeks") setLeadWeeks(value);
       })
       .subscribe();
     return()=>supabase.removeChannel(channel);
   },[]);
 
   // ── Save all state to Supabase ──
-  const saveAll=useCallback(async(p,t,m,l,wp)=>{
+  const saveAll=useCallback(async(p,t,m,l,wp,lw)=>{
     const rows=[
-      {key:"pp-parts",   value:p},
-      {key:"pp-targets", value:t},
-      {key:"pp-mix",     value:m},
-      {key:"pp-log",     value:l},
-      {key:"pp-weekplan",value:wp||{}},
+      {key:"pp-parts",    value:p},
+      {key:"pp-targets",  value:t},
+      {key:"pp-mix",      value:m},
+      {key:"pp-log",      value:l},
+      {key:"pp-weekplan", value:wp||{}},
+      {key:"pp-leadweeks",value:lw||DEFAULT_LEAD_WEEKS},
     ];
     const{error}=await supabase.from("pp_data").upsert(rows,{onConflict:"key"});
     if(!error){setSyncMsg("✓ Synced");setTimeout(()=>setSyncMsg(""),2000);}
@@ -767,8 +780,8 @@ export default function App(){
 
   const reset=async()=>{
     if(!window.confirm("Reset ALL shared data for the whole team?"))return;
-    setParts(MASTER);setTargets(INIT_TARGETS);setMix(INIT_MIX);setBuildLog([]);setWeekPlan({});
-    await saveAll(MASTER,INIT_TARGETS,INIT_MIX,[],{});
+    setParts(MASTER);setTargets(INIT_TARGETS);setMix(INIT_MIX);setBuildLog([]);setWeekPlan({});setLeadWeeks(DEFAULT_LEAD_WEEKS);
+    await saveAll(MASTER,INIT_TARGETS,INIT_MIX,[],{},DEFAULT_LEAD_WEEKS);
   };
 
   const tb=buildLog.reduce((a,e)=>a+e.pp64+e.pp128,0);
@@ -836,7 +849,7 @@ export default function App(){
       {tab==="production" &&<Production parts={parts} setParts={setParts} targets={targets} setTargets={setTargets} mix={mix} setMix={setMix} buildLog={buildLog} setBuildLog={setBuildLog} weekPlan={weekPlan} setWeekPlan={setWeekPlan} saveAll={saveAll}/>}
       {tab==="inventory"  &&<Inventory  parts={parts} setParts={setParts} targets={targets} buildLog={buildLog} saveAll={saveAll} mix={mix} weekPlan={weekPlan}/>}
       {tab==="orders"     &&<Orders     parts={parts} targets={targets} buildLog={buildLog}/>}
-      {tab==="forecast"   &&<Forecast   parts={parts} targets={targets} mix={mix} buildLog={buildLog} weekPlan={weekPlan}/>}
+      {tab==="forecast"   &&<Forecast   parts={parts} targets={targets} mix={mix} buildLog={buildLog} weekPlan={weekPlan} leadWeeks={leadWeeks} setLeadWeeks={setLeadWeeks} saveAll={saveAll} allState={{parts,targets,mix,buildLog,weekPlan}}/>}
     </div>
   </div>;
 }
