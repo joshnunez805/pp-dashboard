@@ -754,8 +754,8 @@ function SubAssemblyPlanner({parts,targets,mix,buildLog,weekPlan,buffers,setBuff
       demand[p.id]=[];
       let running=p.qty;
       for(let w=0;w<TOTAL_WEEKS;w++){
-        const row=sched.find(r=>r.week===maxActualWeek+w+1);
-        const used=row?(p.p64*(row.pp64||0)+p.p128*(row.pp128||0)):0;
+        const row=sched[w];
+        const used=row?(p.p64*(row.canP64||0)+p.p128*(row.canP128||0)):0;
         running=Math.max(0,running-used);
         demand[p.id].push({week:maxActualWeek+w+1,stockAfter:running,used});
       }
