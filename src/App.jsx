@@ -732,6 +732,147 @@ function Forecast({parts,targets,mix,buildLog,weekPlan,leadWeeks,setLeadWeeks,sa
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
+
+// ── SUB-ASSEMBLY PLANNER ──────────────────────────────────────────────────────
+function SubAssemblyPlanner({parts,targets,mix,buildLog,weekPlan,buffers,setBuffers,saveAll,allState}){
+  const TOTAL_WEEKS=16;
+  const SUB_CATS=["Sub-Assemblies","Relay Modules","Motherboards","Chassis","PCBs","Power & Compute"];
+  const subParts=parts.filter(p=>SUB_CATS.includes(p.cat)&&(p.p64>0||p.p128>0));
+
+  const bP64=buildLog.reduce((a,e)=>a+e.pp64,0);
+  const bP128=buildLog.reduce((a,e)=>a+e.pp128,0);
+  const maxActualWeek=buildLog.length>0?Math.max(...buildLog.map(e=>e.weekNum||1)):0;
+
+  // Weekly demand per part from schedule
+  const weeklyDemand=React.useMemo(()=>{
+    const sched=calcSchedule(parts,mix,
+      Math.max(0,targets.pp64-bP64),
+      Math.max(0,targets.pp128-bP128),
+      weekPlan,maxActualWeek);
+    const demand={};
+    subParts.forEach(p=>{
+      demand[p.id]=[];
+      let running=p.qty;
+      for(let w=0;w<TOTAL_WEEKS;w++){
+        const row=sched.find(r=>r.week===maxActualWeek+w+1);
+        const used=row?(p.p64*(row.pp64||0)+p.p128*(row.pp128||0)):0;
+        running=Math.max(0,running-used);
+        demand[p.id].push({week:maxActualWeek+w+1,stockAfter:running,used});
+      }
+    });
+    return demand;
+  },[parts,mix,targets,buildLog,weekPlan]);
+
+  // Compute run-out week and start-by week per part
+  function getRunOut(partId){
+    const d=weeklyDemand[partId]||[];
+    for(let i=0;i<d.length;i++){if(d[i].stockAfter<=0)return d[i].week;}
+    return null; // never runs out
+  }
+
+  const STATUS_COLORS={urgent:C.red,soon:C.amber,ok:C.green,never:"#2dd4bf"};
+
+  return <div>
+    <div style={{...S.card}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={S.cT}>Sub-Assembly Build Planner</div>
+        <div style={{fontSize:10,color:C.grey}}>Set buffer weeks per part · calendar shows when to START building or ordering</div>
+      </div>
+
+      {/* Calendar grid */}
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead>
+            <tr>
+              <th style={{textAlign:"left",padding:"6px 10px",color:C.grey,fontSize:10,letterSpacing:"0.1em",borderBottom:"1px solid #1e2d3d",minWidth:200}}>PART</th>
+              <th style={{textAlign:"center",padding:"6px 8px",color:C.grey,fontSize:10,borderBottom:"1px solid #1e2d3d",minWidth:60}}>HAVE</th>
+              <th style={{textAlign:"center",padding:"6px 8px",color:C.grey,fontSize:10,borderBottom:"1px solid #1e2d3d",minWidth:50}}>BUFFER</th>
+              <th style={{textAlign:"center",padding:"6px 8px",color:C.grey,fontSize:10,borderBottom:"1px solid #1e2d3d",minWidth:80}}>START BY</th>
+              <th style={{textAlign:"center",padding:"6px 8px",color:C.grey,fontSize:10,borderBottom:"1px solid #1e2d3d",minWidth:80}}>RUNS OUT</th>
+              {Array.from({length:TOTAL_WEEKS},(_,i)=>(
+                <th key={i} style={{textAlign:"center",padding:"4px 3px",color:C.grey,fontSize:9,borderBottom:"1px solid #1e2d3d",minWidth:32,letterSpacing:0}}>
+                  W{maxActualWeek+i+1}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {subParts.map((p,idx)=>{
+              const runOut=getRunOut(p.id);
+              const buf=buffers[p.id]??2;
+              const startBy=runOut?runOut-buf:null;
+              const demand=weeklyDemand[p.id]||[];
+              const status=!runOut?"never":startBy<=maxActualWeek+1?"urgent":startBy<=maxActualWeek+3?"soon":"ok";
+              const statusColor=STATUS_COLORS[status];
+
+              return <tr key={p.id} style={{background:idx%2?"#0d1117":"#0a0e14",borderBottom:"1px solid #1e2d3d11"}}>
+                <td style={{padding:"8px 10px"}}>
+                  <div style={{fontWeight:600,color:"#e2e8f0",fontSize:11}}>{p.desc}</div>
+                  <div style={{fontSize:9,color:C.grey,marginTop:1}}>{p.pn}</div>
+                </td>
+                <td style={{textAlign:"center",padding:"8px 8px",color:C.teal,fontWeight:700}}>{p.qty}</td>
+                <td style={{textAlign:"center",padding:"8px 4px"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:2}}>
+                    <input type="number" min="0" max="12" value={buf}
+                      onChange={e=>{
+                        const v=Math.max(0,parseInt(e.target.value)||0);
+                        const nb={...buffers,[p.id]:v};
+                        setBuffers(nb);
+                        saveAll(allState.parts,allState.targets,allState.mix,allState.buildLog,allState.weekPlan,allState.leadWeeks,nb);
+                      }}
+                      style={{width:32,textAlign:"center",background:"#141c2a",border:"1px solid #1e3a5f",
+                        borderRadius:3,color:C.amber,padding:"2px 2px",fontSize:11,fontFamily:"inherit",fontWeight:700}}/>
+                    <span style={{fontSize:9,color:C.grey}}>w</span>
+                  </div>
+                </td>
+                <td style={{textAlign:"center",padding:"8px 8px"}}>
+                  {startBy?<span style={{color:statusColor,fontWeight:700}}>W{startBy}</span>:<span style={{color:C.green}}>✓ OK</span>}
+                </td>
+                <td style={{textAlign:"center",padding:"8px 8px"}}>
+                  {runOut?<span style={{color:C.red,fontWeight:700}}>W{runOut}</span>:<span style={{color:C.green}}>Never</span>}
+                </td>
+                {Array.from({length:TOTAL_WEEKS},(_,i)=>{
+                  const wk=maxActualWeek+i+1;
+                  const d=demand[i];
+                  const isRunOut=runOut===wk;
+                  const isStartBy=startBy===wk;
+                  const isUrgentZone=startBy&&runOut&&wk>=startBy&&wk<runOut;
+                  const isCovered=!runOut||wk<startBy;
+                  let bg="transparent",label="";
+                  if(isRunOut){bg=C.red+"44";label="⚠";}
+                  else if(isStartBy){bg=C.amber+"55";label="▶";}
+                  else if(isUrgentZone){bg=C.amber+"22";}
+                  else if(isCovered){bg=C.green+"11";}
+                  return <td key={i} style={{textAlign:"center",padding:"4px 2px",background:bg,position:"relative"}}>
+                    {label&&<span style={{fontSize:10,fontWeight:700,color:isRunOut?C.red:C.amber}}>{label}</span>}
+                    {!label&&d&&d.used>0&&<span style={{fontSize:8,color:"#2dd4bf55"}}>-{d.used}</span>}
+                  </td>;
+                })}
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Legend */}
+      <div style={{display:"flex",gap:16,marginTop:12,padding:"8px 0",borderTop:"1px solid #1e2d3d",flexWrap:"wrap"}}>
+        {[
+          {color:C.green+"22",label:"Covered — stock sufficient"},
+          {color:C.amber+"55",label:"▶ Start building / ordering now"},
+          {color:C.amber+"22",label:"Build window"},
+          {color:C.red+"44",label:"⚠ Runs out this week"},
+        ].map(({color,label})=>(
+          <div key={label} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:C.grey}}>
+            <div style={{width:16,height:12,background:color,borderRadius:2,border:"1px solid #1e2d3d"}}/>
+            {label}
+          </div>
+        ))}
+        <div style={{fontSize:10,color:C.grey,marginLeft:"auto"}}>Buffer = weeks before runout to trigger start · -N = parts consumed that week</div>
+      </div>
+    </div>
+  </div>;
+}
+
 export default function App(){
   const [tab,setTab]              = useState("overview");
   const [parts,setParts]          = useState(MASTER);
@@ -740,6 +881,7 @@ export default function App(){
   const [weekPlan,setWeekPlan]    = useState(INIT_WEEKPLAN);
   const [buildLog,setBuildLog]    = useState([]);
   const [leadWeeks,setLeadWeeks]  = useState(DEFAULT_LEAD_WEEKS);
+  const [buffers,setBuffers]      = useState({});
   const [loading,setLoading]      = useState(true);
   const [syncMsg,setSyncMsg]      = useState("");
 
@@ -749,8 +891,8 @@ export default function App(){
       const{data,error}=await supabase.from("pp_data").select("key,value");
       if(!error&&data){
         const row=k=>data.find(r=>r.key===k)?.value;
-        const p=row("pp-parts"),t=row("pp-targets"),m=row("pp-mix"),l=row("pp-log"),wp=row("pp-weekplan"),lw=row("pp-leadweeks");
-        if(p)setParts(p); if(t)setTargets(t); if(m)setMix(m); if(l)setBuildLog(l); if(wp)setWeekPlan(wp); if(lw)setLeadWeeks(lw);
+        const p=row("pp-parts"),t=row("pp-targets"),m=row("pp-mix"),l=row("pp-log"),wp=row("pp-weekplan"),lw=row("pp-leadweeks"),buf=row("pp-buffers");
+        if(p)setParts(p); if(t)setTargets(t); if(m)setMix(m); if(l)setBuildLog(l); if(wp)setWeekPlan(wp); if(lw)setLeadWeeks(lw); if(buf)setBuffers(buf);
       }
       setLoading(false);
     })();
@@ -768,13 +910,14 @@ export default function App(){
         if(key==="pp-log")       setBuildLog(value);
         if(key==="pp-weekplan")  setWeekPlan(value);
         if(key==="pp-leadweeks") setLeadWeeks(value);
+        if(key==="pp-buffers")   setBuffers(value);
       })
       .subscribe();
     return()=>supabase.removeChannel(channel);
   },[]);
 
   // ── Save all state to Supabase ──
-  const saveAll=useCallback(async(p,t,m,l,wp,lw)=>{
+  const saveAll=useCallback(async(p,t,m,l,wp,lw,buf)=>{
     const rows=[
       {key:"pp-parts",    value:p},
       {key:"pp-targets",  value:t},
@@ -782,6 +925,7 @@ export default function App(){
       {key:"pp-log",      value:l},
       {key:"pp-weekplan", value:wp||{}},
       {key:"pp-leadweeks",value:lw||DEFAULT_LEAD_WEEKS},
+      {key:"pp-buffers",  value:buf||{}},
     ];
     const{error}=await supabase.from("pp_data").upsert(rows,{onConflict:"key"});
     if(!error){setSyncMsg("✓ Synced");setTimeout(()=>setSyncMsg(""),2000);}
@@ -790,8 +934,8 @@ export default function App(){
 
   const reset=async()=>{
     if(!window.confirm("Reset ALL shared data for the whole team?"))return;
-    setParts(MASTER);setTargets(INIT_TARGETS);setMix(INIT_MIX);setBuildLog([]);setWeekPlan({});setLeadWeeks(DEFAULT_LEAD_WEEKS);
-    await saveAll(MASTER,INIT_TARGETS,INIT_MIX,[],{},DEFAULT_LEAD_WEEKS);
+    setParts(MASTER);setTargets(INIT_TARGETS);setMix(INIT_MIX);setBuildLog([]);setWeekPlan({});setLeadWeeks(DEFAULT_LEAD_WEEKS);setBuffers({});
+    await saveAll(MASTER,INIT_TARGETS,INIT_MIX,[],{},DEFAULT_LEAD_WEEKS,{});
   };
 
   const tb=buildLog.reduce((a,e)=>a+e.pp64+e.pp128,0);
@@ -806,7 +950,7 @@ export default function App(){
     return needed>0&&(p.qty+p.inBuild+p.onOrder)<needed&&!p.inBuild&&!p.onOrder;
   }).length;
 
-  const TABS=[["overview","📊 Overview"],["production","📅 Production"],["inventory","📦 Inventory"],["orders","⚡ Orders"],["forecast",`🔔 Forecast${critCount>0?` (${critCount})`:""}`]];
+  const TABS=[["overview","📊 Overview"],["production","📅 Production"],["inventory","📦 Inventory"],["orders","⚡ Orders"],["forecast",`🔔 Forecast${critCount>0?` (${critCount})`:""}`],["planner","🗓 SA Planner"]];
 
   if(loading) return(
     <div style={{...S.app,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",gap:16}}>
@@ -859,7 +1003,8 @@ export default function App(){
       {tab==="production" &&<Production parts={parts} setParts={setParts} targets={targets} setTargets={setTargets} mix={mix} setMix={setMix} buildLog={buildLog} setBuildLog={setBuildLog} weekPlan={weekPlan} setWeekPlan={setWeekPlan} saveAll={saveAll}/>}
       {tab==="inventory"  &&<Inventory  parts={parts} setParts={setParts} targets={targets} buildLog={buildLog} saveAll={saveAll} mix={mix} weekPlan={weekPlan}/>}
       {tab==="orders"     &&<Orders     parts={parts} targets={targets} buildLog={buildLog}/>}
-      {tab==="forecast"   &&<Forecast   parts={parts} targets={targets} mix={mix} buildLog={buildLog} weekPlan={weekPlan} leadWeeks={leadWeeks} setLeadWeeks={setLeadWeeks} saveAll={saveAll} allState={{parts,targets,mix,buildLog,weekPlan}}/>}
+      {tab==="forecast"   &&<Forecast   parts={parts} targets={targets} mix={mix} buildLog={buildLog} weekPlan={weekPlan} leadWeeks={leadWeeks} setLeadWeeks={setLeadWeeks} saveAll={saveAll} allState={{parts,targets,mix,buildLog,weekPlan,leadWeeks}}/>}
+      {tab==="planner"    &&<SubAssemblyPlanner parts={parts} targets={targets} mix={mix} buildLog={buildLog} weekPlan={weekPlan} buffers={buffers} setBuffers={setBuffers} saveAll={saveAll} allState={{parts,targets,mix,buildLog,weekPlan,leadWeeks,buffers}}/>}
     </div>
   </div>;
 }
