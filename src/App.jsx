@@ -50,10 +50,20 @@ const DEFAULT_LEAD_WEEKS={
 };
 
 // ── ENGINE ────────────────────────────────────────────────────────────────────
-function buildableNow(parts,type){
-  const k=type==="pp64"?"p64":"p128";let m=Infinity;
-  for(const p of parts){if(!p[k])continue;const c=Math.floor(p.qty/p[k]);if(c<m)m=c;}
-  return m===Infinity?0:m;
+function buildableBoth(parts, mix){
+  const p64=mix.p64||10, p128=mix.p128||8, total=p64+p128;
+  if(total===0) return {pp64:0,pp128:0,total:0};
+  // Binary search for max total units T, split by mix ratio
+  let lo=0,hi=10000;
+  while(lo<hi){
+    const mid=Math.floor((lo+hi+1)/2);
+    const n64=Math.floor(mid*p64/total),n128=mid-n64;
+    let ok=true;
+    for(const p of parts){if(p.p64*n64+p.p128*n128>p.qty){ok=false;break;}}
+    if(ok)lo=mid;else hi=mid-1;
+  }
+  const n64=Math.floor(lo*p64/total),n128=lo-n64;
+  return{pp64:n64,pp128:n128,total:lo};
 }
 function deductParts(parts,n64,n128){
   return parts.map(p=>{const u=p.p64*n64+p.p128*n128;return u?{...p,qty:Math.max(0,p.qty-u)}:p;});
@@ -118,7 +128,7 @@ function Overview({parts,targets,mix,buildLog}){
   const remP64=Math.max(0,targets.pp64-bP64),remP128=Math.max(0,targets.pp128-bP128);
   const tt=targets.pp64+targets.pp128,tb=bP64+bP128,pct=tt>0?Math.round(tb/tt*100):0;
   const sched=useMemo(()=>calcSchedule(parts,mix,remP64,remP128,{},0),[parts,mix,remP64,remP128]);
-  const nowP64=buildableNow(parts,"pp64"),nowP128=buildableNow(parts,"pp128");
+  const {pp64:nowP64,pp128:nowP128}=useMemo(()=>buildableBoth(parts,mix),[parts,mix]);
   const ew=sched.length>0?sched[sched.length-1].week:(remP64+remP128===0?0:"?");
   const blockers=parts.filter(p=>{const n=p.p64*remP64+p.p128*remP128;return n>0&&p.qty<n;})
     .sort((a,b)=>((b.p64*remP64+b.p128*remP128)-b.qty)-((a.p64*remP64+a.p128*remP128)-a.qty)).slice(0,6);
@@ -786,7 +796,7 @@ export default function App(){
 
   const tb=buildLog.reduce((a,e)=>a+e.pp64+e.pp128,0);
   const tt=targets.pp64+targets.pp128,pct=Math.round(tb/tt*100)||0;
-  const nowT=buildableNow(parts,"pp64")+buildableNow(parts,"pp128");
+  const nowT=useMemo(()=>buildableBoth(parts,mix).total,[parts,mix]);
 
   const bP64_badge=buildLog.reduce((a,e)=>a+e.pp64,0),bP128_badge=buildLog.reduce((a,e)=>a+e.pp128,0);
   const critCount=parts.filter(p=>{
