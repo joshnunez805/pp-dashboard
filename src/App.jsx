@@ -744,7 +744,7 @@ function SubAssemblyPlanner({parts,targets,mix,buildLog,weekPlan,buffers,setBuff
   const maxActualWeek=buildLog.length>0?Math.max(...buildLog.map(e=>e.weekNum||1)):0;
 
   // Weekly demand per part from schedule
-  const weeklyDemand=React.useMemo(()=>{
+  const weeklyDemand=useMemo(()=>{
     const sched=calcSchedule(parts,mix,
       Math.max(0,targets.pp64-bP64),
       Math.max(0,targets.pp128-bP128),
