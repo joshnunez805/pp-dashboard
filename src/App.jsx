@@ -423,7 +423,10 @@ function Production({parts,setParts,targets,setTargets,mix,setMix,buildLog,setBu
           </tr></thead>
           <tbody>
             {actualRows.map(row=>{
-              const planP64=mix.p64,planP128=mix.p128,wkTotal=row.pp64+row.pp128;
+              const wp=weekPlan[row.weekNum];
+              const planP64=wp?.pp64!==undefined?wp.pp64:mix.p64;
+              const planP128=wp?.pp128!==undefined?wp.pp128:mix.p128;
+              const wkTotal=row.pp64+row.pp128;
               const hitPlan=row.pp64>=planP64&&row.pp128>=planP128,partial=!hitPlan&&wkTotal>0;
               const sc=hitPlan?C.green:partial?C.amber:C.red;
               return <tr key={"a"+row.weekNum} style={{background:"#091209",borderLeft:`3px solid ${C.teal}`}}>
