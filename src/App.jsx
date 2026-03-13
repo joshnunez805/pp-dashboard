@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 // ── SUPABASE CONFIG ───────────────────────────────────────────────────────────
 // Replace these two values with your own from https://supabase.com/dashboard/project/_/settings/api
-const SUPABASE_URL  =  "https://bfptwccdygdtsrzcrqhj.supabase.co";
+const SUPABASE_URL  = "https://bfptwccdygdtsrzcrqhj.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmcHR3Y2NkeWdkdHNyemNycWhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNzY5MjIsImV4cCI6MjA4ODk1MjkyMn0.Uo2L_oFLBGDrA4V2Ywf-dh__n3Vbt9DqzHUl0T6-6Ro";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -62,7 +62,7 @@ function previewDeduct(parts,n64,n128){
   return parts.map(p=>{const u=p.p64*n64+p.p128*n128;if(!u)return null;const after=p.qty-u;return{...p,used:u,after,tight:after<0};}).filter(Boolean);
 }
 function parseEtaWeek(eta){const n=parseInt(eta);return(!isNaN(n)&&n>=1&&n<=20)?n:null;}
-function calcSchedule(parts,mix,remP64,remP128){
+function calcSchedule(parts,mix,remP64,remP128,weekPlan={},startWeek=0){
   let inv=parts.map(p=>({...p}));const rows=[];let cP64=0,cP128=0;
   for(let w=0;w<20;w++){
     for(const p of inv){
@@ -72,7 +72,11 @@ function calcSchedule(parts,mix,remP64,remP128){
     }
     const rP64=remP64-cP64,rP128=remP128-cP128;
     if(rP64<=0&&rP128<=0)break;
-    let wP64=Math.min(mix.p64,Math.max(0,rP64)),wP128=Math.min(mix.p128,Math.max(0,rP128));
+    const weekNum=startWeek+w+1;
+    const wp=weekPlan[weekNum];
+    const planP64=wp?.pp64!==undefined?wp.pp64:mix.p64;
+    const planP128=wp?.pp128!==undefined?wp.pp128:mix.p128;
+    let wP64=Math.min(planP64,Math.max(0,rP64)),wP128=Math.min(planP128,Math.max(0,rP128));
     let canP64=wP64,canP128=wP128;
     for(const p of inv){const need=p.p64*canP64+p.p128*canP128;if(need>p.qty&&need>0){const r=p.qty/need;canP64=Math.floor(canP64*r);canP128=Math.floor(canP128*r);}}
     for(const p of inv){const u=p.p64*canP64+p.p128*canP128;p.qty=Math.max(0,p.qty-u);}
@@ -113,7 +117,7 @@ function Overview({parts,targets,mix,buildLog}){
   const bP128=buildLog.reduce((a,e)=>a+e.pp128,0);
   const remP64=Math.max(0,targets.pp64-bP64),remP128=Math.max(0,targets.pp128-bP128);
   const tt=targets.pp64+targets.pp128,tb=bP64+bP128,pct=tt>0?Math.round(tb/tt*100):0;
-  const sched=useMemo(()=>calcSchedule(parts,mix,remP64,remP128),[parts,mix,remP64,remP128]);
+  const sched=useMemo(()=>calcSchedule(parts,mix,remP64,remP128,{},0),[parts,mix,remP64,remP128]);
   const nowP64=buildableNow(parts,"pp64"),nowP128=buildableNow(parts,"pp128");
   const ew=sched.length>0?sched[sched.length-1].week:(remP64+remP128===0?0:"?");
   const blockers=parts.filter(p=>{const n=p.p64*remP64+p.p128*remP128;return n>0&&p.qty<n;})
@@ -231,7 +235,7 @@ function Production({parts,setParts,targets,setTargets,mix,setMix,buildLog,setBu
     return m;
   },[buildLog]);
 
-  const projSched=useMemo(()=>calcSchedule(parts,mix,remP64,remP128),[parts,mix,remP64,remP128]);
+  const projSched=useMemo(()=>calcSchedule(parts,mix,remP64,remP128,weekPlan,maxActualWeek),[parts,mix,remP64,remP128,weekPlan,maxActualWeek]);
   const preview=useMemo(()=>previewDeduct(parts,iP64,iP128),[parts,iP64,iP128]);
   const conflict=preview.some(p=>p.tight);
   const total=iP64+iP128;
